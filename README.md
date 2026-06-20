@@ -46,4 +46,181 @@ DDS 核心设计思想：发布 - 订阅（Publish-Subscribe）
               return 0;
 }              
 ```
-              
+   订阅者：
+   ```
+          #include "rclcpp/rclcpp.hpp"
+          #include "std_msgs/msg/string.hpp"
+
+class Listener : public rclcpp::Node {
+         public:
+           Listener(): Node("listener_node"){
+                sub_=this->create_subscription<std_msgs::msg::String>("chatter",10,std::bind
+(&Listener::sub_cb,this,std::placeholders::_1));
+}
+private:
+       void sub_cb(const std_msgs::msg::String::SharedPtr msg)
+{
+          RCLCPP_INFO(this->get_logger(),"收到消息: %s",msg->data.c_str());
+}
+            rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_;
+};
+int main(int argc, char** argv)
+{
+    rclcpp::init(argc, argv);
+    rclcpp::spin(std::make_shared<Listener>());
+    rclcpp::shutdown();
+    return 0;
+}
+```
+#通信服务：
+```
+自定义服务类型
+       srv/AddTwoInts.srv
+            int64 a
+            int64 b
+           ---------
+            int64 sum
+         服务端：
+             #include "rclcpp/rclcpp.hpp"
+             #include "demo_srv/srv/add_two_ints.hpp"
+
+class AddService : public rclcpp::Node{
+         public:
+          AddService(): Node("add_sevice_node") {
+              ser_ = this->create_service("add_two_ints",
+                   std::bind(&AddService::ser_cb),this,std::placeholder::_1,std::placeholder::_2);
+                RCLCPP_INFO(this->get_logger(),"服务端已经启动等待请求");
+}
+   private:
+              void ser_vb(const std::shared_ptr<AddTwoInts::Requst> req,const std::shared_ptr<AddTwoInts::Response res){
+res->sum = req->a + req->b;
+RCLCPP_INFO(this->get_logger(), "收到 %ld + %ld = %ld", req->a, req->b, res->sum);
+}
+           rclcpp::Service<AddTwoInts>SharedPtr ser_;
+};
+int main(int argc,char** argv){
+         rclcpp::init();
+         rclcoo::spin(std::make_shared<AddServer>());
+rclcpp::shutdown();
+return 0;
+}
+```
+  客户端：
+   ```
+      #incldue "rclcpp/rclcpp.hpp"
+      #include "demo_srv/srv/add_two_ints.hpp"
+      #inlcude <chrono>
+
+ class AddClient : public rclcpp:: Node{
+              public:
+            AddClient():Node(add_client_node){
+                   cli_ = this->create_client<AddTwoInts>("add_two_ints");
+}
+bool send_req(int64_t a,int64_t b){
+       while(!cli_->wait_for_service(1s)){
+              if(!rclcpp::ok()){
+            RCLCPP_ERROR(this->get_logger(), "客户端中断");
+                return false;
+                    }
+RCLCPP_WARN(this->get_logger(), "等待服务启动...");
+}
+auto req = std::make_shared<AddTwoInts::Request>();
+req->a = a;
+req->b = b;
+auto result_future = cli_->async_send_request(req);
+if(rclcpp::spin_until_feature_complete(this->get_node_base_interface(),result_feature)==rclcpp::FutureReturnCode::SUCCESS)
+{
+    RCLCPP_INFO(this->get_logger(), "计算结果: %ld", result_future.get()->sum);
+            return true;
+}
+RCLCPP_ERROR(this->get_logger(), "请求失败");
+        return false;
+}
+private:
+    rclcpp::Client<AddTwoInts>::SharedPtr cli_;
+};
+
+int main(int argc, char** argv)
+{
+    rclcpp::init(argc, argv);
+    auto client = std::make_shared<AddClient>();
+    client->send_req(10, 20);
+    rclcpp::shutdown();
+    return 0;
+}
+  ```
+
+#编译配置 package.xml + CMakeLists.txt 
+  CMakeLists.txt 核心片段
+  ```
+    cmake_minimum_required(VERSION 3.8)
+project(demo_ros2)
+
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+
+# 依赖
+find_package(rclcpp REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+
+# 可执行文件
+add_executable(talker src/talker.cpp)
+ament_target_dependencies(talker rclcpp std_msgs)
+
+add_executable(listener src/listener.cpp)
+ament_target_dependencies(listener rclcpp std_msgs)
+
+# 安装
+install(TARGETS
+  talker
+  listener
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+ament_package()
+```
+package.xml 核心依赖
+```
+<buildtool_depend>ament_cmake</buildtool_depend>
+<depend>rclcpp</depend>
+<depend>std_msgs</depend>
+```
+Colcon 编译命令
+```
+# 进入工作空间
+cd ~/ros2_ws
+# 全量编译
+colcon build 
+# 只编译单个包
+colcon build --packages-select demo_ros2
+# 编译后刷新环境变量
+source install/setup.bash
+# 运行节点
+ros2 run demo_ros2 talker
+ros2 run demo_ros2 listener
+```
+#ros工具与调试
+Launch 文件
+```
+ from launch import LaunchDescription
+ from launch_ros.actions import Node
+
+def generate_launch_desscription(){
+    talker_node = Node(
+        package="demo_ros2",
+        executable="talker",
+        name="talker",
+        output="screen"
+    )
+    listener_node = Node(
+        package="demo_ros2",
+        executable="listener",
+        name="listener",
+        output="screen"
+    )
+return LaunchDescription([talker_node, listener_node])
+```
+#TF坐标变换
+    模拟小车odom里程计坐标变换(动态坐标变换)
