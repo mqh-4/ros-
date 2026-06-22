@@ -224,7 +224,7 @@ return LaunchDescription([talker_node, listener_node])
 ```
 #TF坐标变换
     模拟小车odom里程计坐标变换(动态坐标广播)
-    ```
+ ```
   #include "rclcpp/rclcpp.hpp"
   #include "tf2_ros/transform_broadcaster.h"
   #include "geometry_msgs/msg/transform_stamped.hpp"
@@ -252,10 +252,174 @@ return LaunchDescription([talker_node, listener_node])
                x_pos_ += linear_speed_*dt;
                transform.transform.translation.x = x_pos_;
                transform.transform.translation.y = y_pos_;
-               
+               transform.transform.translation.z = 0.0;
+               tf2::Quaternion quat;
+               quat.setRPY(0,0,yaw_);
+               transform.transform.rotation.x = quat.x();
+               transform.transform.rotation.y = quat.y();
+               transform.transform.rotation.z = quat.z();
+               transform.transform.rotation.w = quat.w();
+               tf_broadcaster_->sendTransform(transform);
+               RCLCPP_INFO(this->get_logger(),"小车map坐标 x: %.2f m",x_pos_);
+               }
+               std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
+               rclcpp::TimerBase::SharedPtr timer;
+               double x_pos_,y_pos_,yaw_,linear_speed_;
+               };
+        int main(int argc,char** argv){
+                   rclcpp::init(argc,argv);
+                   auto node = std::make_shared<OdomTfPublisher>();
+                   rclcpp::spin(node);
+                   rclcpp::shutdown();
+                   return 0;
+                   }
+                   ```
 #静态tf广播
-#URDF
+    ```
+        #include "rclcpp/rclcpp.hpp"
+        #include "tf2_ros/static_transform_broadcaster.h"
+        #include "geometry_msgs/msg/transform_stamped.hpp"
+        #include "tf2/LinearMath/Quaternion.h"
+
+        class StaticTfBroadcaster : public rclcpp :: Node
+        {
+           public:
+              StaticTfBroadcaster() :  Node("static_tf_broadcaster")
+              {
+                broadercaste_ = std:: make_shared<tf2_ros""StaticTransformBroadcaster>(this);
+                publish_tf();
+                  }
+            private:
+                 void publish_tf()
+                 {
+                   geometry_msgs::msg::TransformStamped t;
+                   t.header.stamp = this-> get_clock()->now();
+                   t.header.frame_id = "base_link";
+                   t.child_frame_id = "laster_link";
+
+                   t.transform.translation.x = 0.2;
+                   t.transform.translation.y = 0.0;
+                   t.transform.translation.z = 0.1;
+
+                   tf2::Quaternion q;
+                   q.setRPY(0,0,0);
+                   t.transform.rotation.x = q.x();
+                   t.transform.rotation.y = q.y();
+                   t.transform.rotation.z = q.z();
+                   t.transform.rotation.w = q.w();
+
+                   broadcaster_->sendTransform(t);
+                   }
+                   std::shared_ptr<tf2_ros::StaticTransformBroadcaster> broadcaster_;
+                   };
+
+                   int main (int argc,char** argv){
+                     rclcpp::init(argc,argv);
+                     rclcpp::spin(std::make_shared<StaticTFBroadcaster>());
+                     rclcpp::shutdown();
+                     return 0;
+                     }
+                 ```    
+#URDF```
+//XML 格式，描述机器人连杆 link、关节 joint、惯性、碰撞、可视化外形。
+    <？xml version = "1.0"?>
+    <robot name="diff_car">
+       <link name = "base_link">
+          <visual>
+               <geometry><box size = "0.4 0.2 0.1"/></geometry>
+               <material name = "blue"><color rgba="0 0 1 1 "/></material>
+          </visual>
+          <collision>
+            <geometry>
+               <box size = "0.4 0.2 0.1"/>
+            </geometry>
+          </collision>
+          <inertial>
+              <mass Value = "2.0"/>
+              <inertia ixxx="0.1" iyy="0.1" izz="0.1" />
+          </inertial>
+      </link>
+      <joint name = "left_wheel_joint" type = "continuous">
+          <parent link="base_link"/>
+          <child link = "left_wheel_link"/>
+          <origin xyz="-0.15 -0.15 0"/>
+          <axis xyz = "0 1 0"/>
+      </joint>
+      <link name = "left_wheel_link">
+          <visual>
+             <geometry>
+                 <cylinder radius="0.08" length="0.04"/>
+              </geometry>
+          </visual>
+       </link>
+</robot>
+```
 #Xacro
+URDF 原生不支持变量、循环、宏，xacro 做预处理，编译成标准 URDF。
+```
+<?xml version = "1.0"?>
+<robot xmlns:xarco="http://www.ros.org/wiki/xacro" name="diff_car">
+   <xacro:property name="wheel_r" value="0.08"/>
+   <xacro:property name="wheel_r" value="0.04"/>
+   <xacro:macro name = "wheel_macro" params= "joint_name link_name x y">
+        <joint name="${joint_name}" type="continuous">
+           <parent link = "base_link"/>
+           <child link = "${link_name}"/>
+           <orgin xyz=${x} ${y} 0/>
+           <axis xyz="0 1 0"/>
+        </joint>
+        <link name  = "${link_name}">
+             <visual>
+                   <geometry><cylinder radius= "${wheel_r}" length="${wheel_l}"/ ></geometry>
+             </visual>
+        </link>
+</xacro:macro>
+
+<xacro:wheel_macro joint_name = "left_wheel_joint" link_name = "left_wheel" x="-0.15" y="-0.15"/>
+<xacro:wheel_macro joint_name="right_wheel_joint" link_name="right_wheel" x="-0.15" y="0.15"/>
+//robot
+```
+xacro 转 urdf 命令       xacro car.xacro > car.urdf
+
 #Gazebo
-#启动仿真实例
-#完整的Action demo
+Gazebo 是 ROS2 官方物理仿真器，插件实现驱动、传感器、电机控制，核心插件：
+```
+<gazebo>
+    <plugin name="diff_drive_plugin" filename="libgazebo_ros_diff_drive.so">
+        <left_joint>left_wheel_joint</left_joint>
+        <right_joint>right_wheel_joint</right_joint>
+        <wheel_separation>0.3</wheel_separation>
+        <wheel_radius>0.08</wheel_radius>
+        <publish_rate>30</publishing_rate>
+        <odom_topic>odom</odom_topic>
+        <cmd_vel_topic>cmd_vel</cmd_vel_topic>
+    </plugin>
+</gazebo>
+```
+ros2_control（ROS2 标准硬件控制框架）    替代旧 Gazebo 插件驱动，统一硬件 / 仿真控制，三层架构：
+硬件接口 Hardware Interface：读取位置 / 速度 / 力矩
+控制器 Controller：差速控制器、PID 关节控制器、轨迹控制器
+控制器管理器 Controller Manager：加载、切换控制器
+
+#启动仿真实例（整合 URDF+Gazebo+Rviz2）
+```
+from launch import launchDescription
+from  launch_ros.actions import Node
+from  launch.actions import IncludeLaunchDescription
+from  launch.launch_description_sources import PythonLaunchDescriptionSource
+import os
+from ament_index_python.packages import get_package_share_directory
+
+def generate_launch_description();
+     pkg_path = get_package_share_directory("robot_sim")
+     urdf_file = os.path.join(pkg_path,"urdf/car.xacro")
+     robot_state_pub = Node(package = "robot_state_publisher",executable="robot_state_publisher",parameters=[{"robot_description":open(urdf_file).read()}])
+
+gazebo  = IncludeLaunchDescription(PythonLaunchDescriptionSource([os.path.join(get_package_share_directory("gazebo_ros"),"launch/gazebo.launch.py")]))
+
+spawn_entity = Node(package="gazebo_ros",executable = "spawn_entity.py",argument=["-topic","robot_description","-entity","diff_car"])
+
+rviz2 = Node(package="rviz2",executable="rviz2")
+return LaunchDescription([robot_state_pub,gazebo,spawn_entity,rviz2])
+```
+
